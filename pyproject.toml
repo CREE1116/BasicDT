@@ -1,0 +1,40 @@
+[build-system]
+requires = ["setuptools>=68", "numpy>=1.24"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "basicdt"
+version = "0.1.0"
+description = "BasicDT: Fast histogram-based axis-aligned GBDT — native NaN/categorical, high-performance C++ backend"
+readme = "README.md"
+license = { text = "MIT" }
+requires-python = ">=3.10"
+keywords = ["gradient-boosting", "decision-trees", "machine-learning", "tabular-data", "histogram-binning"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+dependencies = [
+    "numpy>=1.24",
+    "pandas>=2.0",
+    "scikit-learn>=1.3",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0", "pytest-cov"]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+"basicdt" = ["_ext/libbasicdt.dylib", "_ext/libbasicdt.so", "_ext/basicdt.dll", "*.pyi"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts   = "-v --tb=short"
