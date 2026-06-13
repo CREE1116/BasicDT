@@ -167,6 +167,22 @@ GF_API void* basicdt_ctx_create(const float* X, int N, int D, int D_num,
 
 GF_API void basicdt_ctx_free(void* h) { delete static_cast<BasicDTCtx*>(h); }
 
+// Set the OpenMP team size for subsequent builds/predicts. Histogram building
+// is memory-bandwidth bound, so the throughput-optimal thread count is often
+// well below the core count and is machine-specific (e.g. it saturates around
+// 4 threads on Apple-silicon's shared memory bus, but a many-core server with
+// more bandwidth wants more). Exposed as the classifier's n_jobs so callers
+// tune per machine instead of the library hard-coding one platform's sweet
+// spot. n <= 0 restores the default (all cores). No-op without OpenMP.
+GF_API void basicdt_set_num_threads(int n) {
+#ifdef _OPENMP
+  if (n > 0) omp_set_num_threads(n);
+  else omp_set_num_threads(omp_get_num_procs());
+#else
+  (void)n;
+#endif
+}
+
 // ─── basicdt_build ─────────────────────────────────────────────────────────
 GF_API void* basicdt_build(void* ctx_handle, const float* G, const float* H,
                            int K, const int* sub, int Ns, int max_depth,
@@ -321,11 +337,19 @@ GF_API void* basicdt_build(void* ctx_handle, const float* G, const float* H,
 #endif
 
     if (nthreads > 1) {
-      // Feature-parallelism re-scans every sample row once per feature block
-      // (~nthreads passes over G/H/code), so it only wins when D is large enough
-      // that the avoided HSZ merge outweighs the extra row traffic. Otherwise use
-      // sample-parallelism (single pass, thread-local merge).
-      if (D >= nthreads * 4 && D >= 8) {
+      // Two parallel strategies trade different memory traffic:
+      //   feature-parallel: each thread re-reads every row's G/H for its
+      //     feature block → ~nr·KH·2·nthreads gradient reads, no merge.
+      //   sample-parallel: one G/H pass + a thread-local histogram merge of
+      //     HSZ·nthreads floats.
+      // Feature-parallel only wins when the merge it avoids costs more than
+      // the extra gradient re-reads, i.e. HSZ ≳ nr·KH·2. The old gate keyed
+      // on D alone and mis-picked feature-parallel for low-K / large-nr nodes
+      // (e.g. K=2, D=50, nr=60k re-read G/H 12× for no reason). Decide on the
+      // actual traffic instead.
+      const size_t merge_traffic = (size_t)D * AX_BINS * STRIDE;
+      const size_t reread_traffic = (size_t)nr * KH * 2;
+      if (D >= 8 && D >= nthreads && merge_traffic > reread_traffic) {
         // Block-wise Feature-parallelism (large D, zero merge overhead)
         int block_size = std::max(1, D / nthreads);
 #pragma omp parallel for schedule(static) num_threads(nthreads)

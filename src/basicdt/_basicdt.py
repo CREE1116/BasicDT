@@ -48,11 +48,11 @@ def _get_basicdt_lib():
     lib.basicdt_get_D.argtypes = [ctypes.c_void_p]
     lib.basicdt_get_D.restype = ctypes.c_int
 
-    lib.basicdt_export.argtypes = [ctypes.c_void_p, _pi, _pf, _pf, _pu8]
+    lib.basicdt_export.argtypes = [ctypes.c_void_p, _pi, _pf, _pf, _pu8, _pi, _pi]
     lib.basicdt_export.restype = None
 
     lib.basicdt_from_arrays.argtypes = [
-        _pi, _pf, _pf, _pu8,
+        _pi, _pf, _pf, _pu8, _pi, _pi,
         ctypes.c_int,  # total_nodes
         ctypes.c_int,  # K
         ctypes.c_int,  # max_depth
@@ -72,6 +72,9 @@ def _get_basicdt_lib():
 
     lib.basicdt_ctx_free.argtypes = [ctypes.c_void_p]
     lib.basicdt_ctx_free.restype = None
+
+    lib.basicdt_set_num_threads.argtypes = [ctypes.c_int]
+    lib.basicdt_set_num_threads.restype = None
 
     lib.basicdt_build.argtypes = [
         ctypes.c_void_p,  # ctx
@@ -141,6 +144,11 @@ def _fptr(a: np.ndarray):
 
 def _iptr(a: np.ndarray):
     return a.ctypes.data_as(_pi)
+
+
+def set_num_threads(n: int) -> None:
+    """Set the OpenMP team size for builds/predicts (n <= 0 = all cores)."""
+    _get_basicdt_lib().basicdt_set_num_threads(int(n))
 
 
 def update_gradients(F: np.ndarray, oh: np.ndarray, G: np.ndarray, H: np.ndarray) -> None:
@@ -258,9 +266,12 @@ class BasicDTree:
         threshold = np.empty(n_nodes,     dtype=np.float32)
         leaf_vals = np.empty(n_nodes * K, dtype=np.float32)
         is_leaf   = np.empty(n_nodes,     dtype=np.uint8)
+        left_child = np.empty(n_nodes,     dtype=np.int32)
+        right_child = np.empty(n_nodes,     dtype=np.int32)
         lib.basicdt_export(
             h, _iptr(split_feature), _fptr(threshold), _fptr(leaf_vals),
             is_leaf.ctypes.data_as(ctypes.POINTER(ctypes.c_uint8)),
+            _iptr(left_child), _iptr(right_child),
         )
 
         sizes = np.zeros(4, dtype=np.int32)
@@ -284,6 +295,8 @@ class BasicDTree:
             "threshold":     threshold,
             "leaf_vals":     leaf_vals,
             "is_leaf":       is_leaf,
+            "left_child":    left_child,
+            "right_child":   right_child,
             "D_num":         D_num,
             "D_cat":         D_cat,
             "na_len":        na_len,
@@ -308,6 +321,7 @@ class BasicDTree:
         handle = lib.basicdt_from_arrays(
             _iptr(s["split_feature"]), _fptr(s["threshold"]), _fptr(s["leaf_vals"]),
             s["is_leaf"].ctypes.data_as(ctypes.POINTER(ctypes.c_uint8)),
+            _iptr(s["left_child"]), _iptr(s["right_child"]),
             s["n_nodes"], s["K"], s["tree_max_depth"], s["D"]
         )
         na_means  = np.ascontiguousarray(s["na_means"],  dtype=np.float32)
@@ -331,13 +345,13 @@ class BasicDTree:
 
 class BasicDContext:
     def __init__(self, X: np.ndarray, D_num: int | None = None):
-        X = np.ascontiguousarray(X, dtype=np.float32)
-        self.N, self.D = X.shape
+        self.X = np.ascontiguousarray(X, dtype=np.float32)
+        self.N, self.D = self.X.shape
         self.D_num = self.D if D_num is None else int(D_num)
         sub = np.arange(self.N, dtype=np.int32)
         lib = _get_basicdt_lib()
         self._handle = lib.basicdt_ctx_create(
-            _fptr(X), self.N, self.D, self.D_num, _iptr(sub), self.N
+            _fptr(self.X), self.N, self.D, self.D_num, _iptr(sub), self.N
         )
 
     def build(

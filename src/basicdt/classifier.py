@@ -56,6 +56,7 @@ class BasicDTClassifier(BaseEstimator, ClassifierMixin):
         cat_features:          list | None = None,
         class_weight:          str | None = None,
         prior_alpha:           float = 0.5,
+        n_jobs:                int | None = None,
     ):
         self.n_estimators          = n_estimators
         self.learning_rate         = learning_rate
@@ -68,6 +69,11 @@ class BasicDTClassifier(BaseEstimator, ClassifierMixin):
         self.cat_features          = cat_features
         self.class_weight          = class_weight
         self.prior_alpha           = prior_alpha
+        # OpenMP team size. Histogram building is memory-bandwidth bound, so
+        # the fastest thread count is machine-specific and often below the
+        # core count (~4 on Apple-silicon's shared bus; more on a many-core
+        # server). None = all cores; tune per machine for best throughput.
+        self.n_jobs                = n_jobs
 
     def _prepare_data(self, X, is_fit=False):
         import pandas as pd
@@ -207,6 +213,10 @@ class BasicDTClassifier(BaseEstimator, ClassifierMixin):
         N, D = X.shape
         K    = int(y.max()) + 1
         seed = self.random_state if self.random_state is not None else 42
+
+        if self.n_jobs is not None:
+            from ._basicdt import set_num_threads
+            set_num_threads(self.n_jobs)
 
         cat_idx = self._resolve_cat_idx(D)
         if cat_idx and cat_idx != list(range(D_num, D)):
